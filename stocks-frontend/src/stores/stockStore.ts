@@ -1,6 +1,11 @@
 import { defineStore } from 'pinia'
 import axios from 'axios'
 
+const api = axios.create({
+    baseURL: 'http://localhost:8080/api',  // Explicitly setting the backend URL for development
+    timeout: 10000
+  })
+
 interface StockData {
   date: string
   open: number
@@ -26,10 +31,11 @@ export const useStockStore = defineStore('stock', {
       this.currentRange = range
       
       try {
-        const response = await axios.get(`/api/stocks/${symbol}`, {
+        const response = await api.get(`/stocks/${symbol}`, { // Use the custom axios instance
           params: { range }
         })
         this.stockData = response.data
+        console.log(this.stockData)
       } catch (err) {
         this.error = err instanceof Error ? err.message : 'Failed to fetch stock data'
       } finally {
@@ -43,7 +49,7 @@ export const useStockStore = defineStore('stock', {
       this.error = null
       
       try {
-        await axios.post(`/api/stocks/${this.currentSymbol}/refresh`)
+        await api.post(`/stocks/${this.currentSymbol}/refresh`)  // Use the custom axios instance
         // After refresh, fetch the data again
         await this.fetchStockData(this.currentSymbol, this.currentRange)
       } catch (err) {

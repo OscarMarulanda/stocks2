@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
 	"github.com/joho/godotenv"
+	"github.com/rs/cors"
 )
 
 type TimeSeriesResponse struct {
@@ -30,6 +31,13 @@ type TimeSeriesResponse struct {
 }
 
 func main() {
+
+	c := cors.New(cors.Options{
+		AllowedOrigins: []string{"http://localhost:5173"}, // Allow only your frontend URL
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE"}, // Allowed HTTP methods
+		AllowedHeaders: []string{"Content-Type", "Authorization"}, // Allowed headers
+	})
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("Warning: No .env file found (using system env vars)")
@@ -52,13 +60,15 @@ func main() {
 	r.HandleFunc("/api/stocks/{symbol}", getStockDataHandler(db)).Methods("GET")
 	r.HandleFunc("/api/stocks/{symbol}/refresh", refreshStockDataHandler(db)).Methods("POST")
 
+	handler := c.Handler(r)
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
 	log.Printf("Server starting on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, r))
+	log.Fatal(http.ListenAndServe(":"+port, handler))
 }
 
 
@@ -83,9 +93,27 @@ func initDB(db *sql.DB) {
 
 func getStockDataHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Log incoming request
+		log.Println("🔍 Incoming GET request:", r.URL.Path)
+
 		vars := mux.Vars(r)
 		symbol := vars["symbol"]
-		timeRange := r.URL.Query().Get("range") // week, month, 6month, year
+		timeRange := r.URL.Query().Get("range")
+
+		// Log symbol and range
+		log.Printf("📊 Symbol: %s, Time Range: %s", symbol, timeRange)
+
+		if symbol == "" {
+			http.Error(w, "Symbol is required", http.StatusBadRequest)
+			log.Println("❌ Error: Symbol is required")
+			return
+		}
+
+		if timeRange == "" {
+			http.Error(w, "Range parameter is required", http.StatusBadRequest)
+			log.Println("❌ Error: Range parameter is required")
+			return
+		}
 
 		var query string
 		var args []interface{}
@@ -119,12 +147,14 @@ func getStockDataHandler(db *sql.DB) http.HandlerFunc {
 			args = []interface{}{symbol}
 		default:
 			http.Error(w, "Invalid time range specified", http.StatusBadRequest)
+			log.Println("❌ Error: Invalid time range:", timeRange)
 			return
 		}
 
 		rows, err := db.Query(query, args...)
 		if err != nil {
 			http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+			log.Println("❌ Error: Database query failed", err)
 			return
 		}
 		defer rows.Close()
@@ -145,16 +175,22 @@ func getStockDataHandler(db *sql.DB) http.HandlerFunc {
 			err := rows.Scan(&date, &sd.Open, &sd.High, &sd.Low, &sd.Close, &sd.Volume)
 			if err != nil {
 				http.Error(w, "Error scanning row: "+err.Error(), http.StatusInternalServerError)
+				log.Println("❌ Error: Scanning row", err)
 				return
 			}
 			sd.Date = date.Format("2006-01-02")
 			data = append(data, sd)
 		}
 
+		// Log response data
+		log.Printf("✅ Successfully fetched %d stock data entries for symbol %s", len(data), symbol)
+
+		// Send the response
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(data)
 	}
 }
+
 
 func refreshStockDataHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

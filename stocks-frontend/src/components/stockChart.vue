@@ -48,7 +48,9 @@
   <script lang="ts">
   import { defineComponent, onMounted, ref, watch } from 'vue'
   import { useStockStore } from '@/stores/stockStore'
-  import Chart from 'chart.js/auto'
+  import { Chart } from 'chart.js'
+  
+  
   
   export default defineComponent({
     props: {
@@ -105,7 +107,6 @@
               data: closePrices,
               borderColor: 'rgb(59, 130, 246)',
               backgroundColor: 'rgba(59, 130, 246, 0.1)',
-              tension: 0.1,
               fill: true
             }]
           },
