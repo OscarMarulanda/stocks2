@@ -35,22 +35,45 @@
         {{ error }}
       </div>
   
-      <div v-else-if="stockData.length === 0" class="text-gray-500 p-4">
-        No data available for this time range.
-      </div>
+      <div v-else-if="stockStore.stockData.length === 0" class="text-gray-500 p-4">
+  No data available for this time range.
+</div>
   
-      <div v-else class="h-96">
-        <canvas ref="chartCanvas"></canvas>
-      </div>
+<div v-else class="h-96">
+  <canvas ref="chartCanvas"></canvas>
+</div>
     </div>
   </template>
   
   <script lang="ts">
-  import { defineComponent, onMounted, ref, watch } from 'vue'
+  import { defineComponent, onMounted, ref, watch, onBeforeUnmount, nextTick  } from 'vue'
   import { useStockStore } from '@/stores/stockStore'
-  import { Chart } from 'chart.js'
-  
-  
+  import {
+  Chart,
+  LineController,
+  LineElement,
+  PointElement,
+  LinearScale,
+  TimeScale,
+  CategoryScale,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+} from 'chart.js'
+
+  Chart.register(
+  LineController,
+  LineElement,
+  PointElement,
+  LinearScale,
+  TimeScale,
+  CategoryScale,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+)
   
   export default defineComponent({
     props: {
@@ -62,7 +85,7 @@
     setup(props) {
       const stockStore = useStockStore()
       const chartCanvas = ref<HTMLCanvasElement | null>(null)
-      let chartInstance: Chart | null = null
+      const chartInstance = ref<Chart | null>(null)
   
       const timeRanges = [
         { value: 'week', label: '1 Week' },
@@ -72,11 +95,76 @@
       ]
   
       const currentRange = ref('month')
+      const timeRangeLabel = ref(timeRanges.find(r => r.value === currentRange.value)?.label || '')
   
-      const timeRangeLabel = timeRanges.find(r => r.value === currentRange.value)?.label || ''
+      const destroyChart = () => {
+        if (chartInstance.value) {
+          chartInstance.value.destroy()
+          chartInstance.value = null
+        }
+      }
+  
+      const renderChart = () => {
+  if (!chartCanvas.value) {
+    console.warn('Canvas not ready yet')
+    return
+  }
+
+  const ctx = chartCanvas.value.getContext('2d')
+  if (!ctx) {
+    console.warn('Canvas context not available')
+    return
+  }
+
+  // ✅ Destroy chart before creating a new one
+  if (chartInstance.value) {
+    chartInstance.value.destroy()
+    chartInstance.value = null
+  }
+
+  if (stockStore.stockData.length === 0) return
+
+  const labels = stockStore.stockData.map(d => d.date).reverse()
+  const closePrices = stockStore.stockData.map(d => d.close).reverse()
+
+  chartInstance.value = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Closing Price',
+        data: closePrices,
+        borderColor: 'rgb(59, 130, 246)',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        fill: true,
+        tension: 0.1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          beginAtZero: false,
+          title: {
+            display: true,
+            text: 'Price ($)'
+          }
+        },
+        x: {
+          title: {
+            display: true,
+            text: 'Date'
+          }
+        }
+      }
+    }
+  })
+}
   
       const updateRange = (range: string) => {
         currentRange.value = range
+        timeRangeLabel.value = timeRanges.find(r => r.value === range)?.label || ''
         stockStore.fetchStockData(props.symbol, range)
       }
   
@@ -84,60 +172,23 @@
         stockStore.refreshStockData()
       }
   
-      const renderChart = () => {
-        if (!chartCanvas.value) return
+      watch(() => stockStore.stockData, async (newData) => {
+  if (Array.isArray(newData) && newData.length > 0) {
+    await nextTick()  // ⏳ Wait for DOM (including canvas) to update
+    if (chartCanvas.value) {
+      renderChart()
+    } else {
+      console.warn('Canvas still not available after nextTick')
+    }
+  }
+}, { deep: true })
   
-        // Destroy previous chart if it exists
-        if (chartInstance) {
-          chartInstance.destroy()
-        }
-  
-        const ctx = chartCanvas.value.getContext('2d')
-        if (!ctx) return
-  
-        const labels = stockStore.stockData.map(d => d.date).reverse()
-        const closePrices = stockStore.stockData.map(d => d.close).reverse()
-  
-        chartInstance = new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels,
-            datasets: [{
-              label: 'Closing Price',
-              data: closePrices,
-              borderColor: 'rgb(59, 130, 246)',
-              backgroundColor: 'rgba(59, 130, 246, 0.1)',
-              fill: true
-            }]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-              y: {
-                beginAtZero: false,
-                title: {
-                  display: true,
-                  text: 'Price ($)'
-                }
-              },
-              x: {
-                title: {
-                  display: true,
-                  text: 'Date'
-                }
-              }
-            }
-          }
-        })
-      }
-  
-      // Watch for changes in stock data
-      watch(() => stockStore.stockData, renderChart, { deep: true })
-  
-      // Initial fetch
       onMounted(() => {
         stockStore.fetchStockData(props.symbol, currentRange.value)
+      })
+  
+      onBeforeUnmount(() => {
+        destroyChart()
       })
   
       return {
@@ -147,9 +198,9 @@
         timeRangeLabel,
         updateRange,
         refreshData,
-        loading: () => stockStore.loading,
-        error: () => stockStore.error,
-        stockData: () => stockStore.stockData
+        loading: stockStore.loading,
+        error: stockStore.error,
+        stockStore,
       }
     }
   })
